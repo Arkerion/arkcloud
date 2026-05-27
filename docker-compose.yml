@@ -1,0 +1,125 @@
+name: nextcloud
+
+services:
+  db:
+    image: mariadb:10.11
+    restart: unless-stopped
+    command: >
+      --transaction-isolation=READ-COMMITTED
+      --log-bin=binlog
+      --binlog-format=ROW
+      --innodb-read-only-compressed=OFF
+    volumes:
+      - db_data:/var/lib/mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: nextcloud
+      MYSQL_USER: nextcloud
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      # NAS Synology (btrfs) est lent au premier init de MariaDB (~5min observe)
+      start_period: 360s
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}"]
+    networks:
+      - internal
+
+  app:
+    image: nextcloud:33-apache
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    # GID 100 = groupe 'users' Synology -> permet a www-data du container
+    # d'acceder aux dossiers /volume1/* (avec ACL synoacltool posee en amont)
+    group_add:
+      - "100"
+    ports:
+      # Reverse Proxy DSM (192.168.1.71:443) routera cloud.arkerion.fr -> 192.168.1.71:8080
+      - "8080:80"
+    volumes:
+      - nc_html:/var/www/html
+      - nc_data:/var/www/html/data
+      - nc_config:/var/www/html/config
+      - nc_apps:/var/www/html/custom_apps
+      # Dossiers NAS exposes en External Storage (configurer ensuite dans l'UI admin)
+      - /volume1/ADMINISTRATION:/external/ADMINISTRATION
+      - /volume1/HUB:/external/HUB
+    environment:
+      MYSQL_HOST: db
+      MYSQL_DATABASE: nextcloud
+      MYSQL_USER: nextcloud
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      REDIS_HOST: redis
+      REDIS_HOST_PASSWORD: ${REDIS_PASSWORD}
+      # NEXTCLOUD_ADMIN_USER/PASSWORD retires -> setup wizard web au premier acces
+      NEXTCLOUD_TRUSTED_DOMAINS: ${NEXTCLOUD_DOMAIN} ${COLLABORA_DOMAIN}
+      # Reverse Proxy DSM est sur la meme machine, plage LAN large pour couvrir docker bridge
+      TRUSTED_PROXIES: 172.16.0.0/12 192.168.0.0/16 10.0.0.0/8
+      OVERWRITEPROTOCOL: https
+      OVERWRITEHOST: ${NEXTCLOUD_DOMAIN}
+      OVERWRITECLIURL: https://${NEXTCLOUD_DOMAIN}
+      PHP_MEMORY_LIMIT: 512M
+      PHP_UPLOAD_LIMIT: 16G
+    networks:
+      - internal
+
+  cron:
+    image: nextcloud:33-apache
+    restart: unless-stopped
+    depends_on:
+      - app
+    group_add:
+      - "100"
+    volumes:
+      - nc_html:/var/www/html
+      - nc_data:/var/www/html/data
+      - nc_config:/var/www/html/config
+      - nc_apps:/var/www/html/custom_apps
+      - /volume1/ADMINISTRATION:/external/ADMINISTRATION
+      - /volume1/HUB:/external/HUB
+    entrypoint: /cron.sh
+    networks:
+      - internal
+
+  # Collabora desactive par defaut (RAM serree sur DS225+ 2Gi).
+  # Pour activer l'edition collaborative .docx/.xlsx : docker compose --profile office up -d
+  collabora:
+    image: collabora/code:latest
+    restart: unless-stopped
+    profiles: ["office"]
+    cap_add:
+      - MKNOD
+    ports:
+      - "9980:9980"
+    environment:
+      aliasgroup1: https://${NEXTCLOUD_DOMAIN}:443
+      extra_params: >-
+        --o:ssl.enable=false
+        --o:ssl.termination=true
+        --o:net.proto=IPv4
+      username: ${COLLABORA_ADMIN_USER}
+      password: ${COLLABORA_ADMIN_PASSWORD}
+    networks:
+      - internal
+
+volumes:
+  db_data:
+  nc_html:
+  nc_data:
+  nc_config:
+  nc_apps:
+
+networks:
+  internal:
