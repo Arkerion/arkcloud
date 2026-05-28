@@ -47,12 +47,15 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
-    # GID 100 = groupe 'users' Synology -> permet a www-data du container
-    # d'acceder aux dossiers /volume1/* (avec ACL synoacltool posee en amont)
-    group_add:
-      - "100"
-    # Garde-fou anti-freeze : Docker bride/OOM-kill le container s'il depasse,
-    # au lieu de laisser tout le NAS swapper. 640M = PHP 512M + overhead Apache.
+    # Entrypoint custom : ajoute www-data au gid 100 (groupe 'users' Synology) AVANT
+    # de lancer l'entrypoint nextcloud. Necessaire car Apache fait son propre
+    # initgroups() et perd le group_add de Docker -> sinon Permission denied sur
+    # les External Storage /external/*. On le fait inline (pas un script-fichier)
+    # car /volume1 est monte noexec sur Synology (exit 126 sur les hooks-fichiers).
+    entrypoint:
+      - /bin/sh
+      - -c
+      - 'getent group 100 >/dev/null 2>&1 || groupadd -g 100 hostusers; usermod -aG 100 www-data; exec /entrypoint.sh apache2-foreground'
     mem_limit: 640m
     ports:
       # Reverse Proxy DSM (192.168.1.71:443) routera cloud.arkerion.fr -> 192.168.1.71:8080
@@ -62,8 +65,6 @@ services:
       - nc_data:/var/www/html/data
       - nc_config:/var/www/html/config
       - nc_apps:/var/www/html/custom_apps
-      # Hook qui ajoute www-data au gid 100 au boot (acces External Storage via ACL)
-      - ./hooks:/docker-entrypoint-hooks.d:ro
       # Dossiers NAS exposes en External Storage (configurer ensuite dans l'UI admin)
       - /volume1/ADMINISTRATION:/external/ADMINISTRATION
       - /volume1/HUB:/external/HUB
@@ -99,7 +100,6 @@ services:
       - nc_data:/var/www/html/data
       - nc_config:/var/www/html/config
       - nc_apps:/var/www/html/custom_apps
-      - ./hooks:/docker-entrypoint-hooks.d:ro
       - /volume1/ADMINISTRATION:/external/ADMINISTRATION
       - /volume1/HUB:/external/HUB
     entrypoint: /cron.sh
