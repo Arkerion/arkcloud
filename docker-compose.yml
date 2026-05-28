@@ -62,6 +62,8 @@ services:
       - nc_data:/var/www/html/data
       - nc_config:/var/www/html/config
       - nc_apps:/var/www/html/custom_apps
+      # Hook qui ajoute www-data au gid 100 au boot (acces External Storage via ACL)
+      - ./hooks:/docker-entrypoint-hooks.d:ro
       # Dossiers NAS exposes en External Storage (configurer ensuite dans l'UI admin)
       - /volume1/ADMINISTRATION:/external/ADMINISTRATION
       - /volume1/HUB:/external/HUB
@@ -97,6 +99,7 @@ services:
       - nc_data:/var/www/html/data
       - nc_config:/var/www/html/config
       - nc_apps:/var/www/html/custom_apps
+      - ./hooks:/docker-entrypoint-hooks.d:ro
       - /volume1/ADMINISTRATION:/external/ADMINISTRATION
       - /volume1/HUB:/external/HUB
     entrypoint: /cron.sh
