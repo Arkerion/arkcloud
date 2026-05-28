@@ -4,11 +4,16 @@ services:
   db:
     image: mariadb:10.11
     restart: unless-stopped
+    # innodb-buffer-pool-size reduit a 64M : sur DS225+ 2Gi on ne peut pas se permettre
+    # le defaut (128M) + overhead. Suffisant pour un usage petite equipe.
     command: >
       --transaction-isolation=READ-COMMITTED
       --log-bin=binlog
       --binlog-format=ROW
       --innodb-read-only-compressed=OFF
+      --innodb-buffer-pool-size=64M
+      --innodb-log-buffer-size=8M
+    mem_limit: 256m
     volumes:
       - db_data:/var/lib/mysql
     environment:
@@ -29,7 +34,8 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}"]
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}", "--maxmemory", "48mb", "--maxmemory-policy", "allkeys-lru"]
+    mem_limit: 64m
     networks:
       - internal
 
@@ -45,6 +51,9 @@ services:
     # d'acceder aux dossiers /volume1/* (avec ACL synoacltool posee en amont)
     group_add:
       - "100"
+    # Garde-fou anti-freeze : Docker bride/OOM-kill le container s'il depasse,
+    # au lieu de laisser tout le NAS swapper. 640M = PHP 512M + overhead Apache.
+    mem_limit: 640m
     ports:
       # Reverse Proxy DSM (192.168.1.71:443) routera cloud.arkerion.fr -> 192.168.1.71:8080
       - "8080:80"
@@ -82,6 +91,7 @@ services:
       - app
     group_add:
       - "100"
+    mem_limit: 256m
     volumes:
       - nc_html:/var/www/html
       - nc_data:/var/www/html/data
